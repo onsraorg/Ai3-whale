@@ -1,0 +1,206 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>大额转账监控（共识链）</title>
+    <style>
+      :root{--bg:#0b1020;--panel:#11172a;--muted:#8a93a5;--text:#e6e8ee;--accent:#7c9dff;--good:#10b981;--mid:#f59e0b;--warn:#ef4444;--border:#1c2540}
+      body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial,sans-serif;margin:24px;color:var(--text);background:var(--bg)}
+      h1{font-size:22px;margin:0 0 12px}
+      .meta{color:var(--muted);margin-bottom:16px}
+      .row{display:flex;gap:16px;flex-wrap:wrap}
+      .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px}
+      .stats{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:12px;margin:12px 0 16px}
+      .stat h3{margin:0 0 6px;font-size:12px;color:var(--muted)}
+      .stat .val{font-size:20px;font-weight:600}
+      .filters{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
+      .filters input,.filters select{background:#0e1324;border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px}
+      .filters label{font-size:12px;color:var(--muted)}
+      .button{background:var(--accent);border:none;color:#0b1020;padding:8px 12px;border-radius:8px;font-weight:600;cursor:pointer}
+      .button.secondary{background:#0e1324;border:1px solid var(--border);color:var(--text)}
+      table{border-collapse:separate;border-spacing:0;width:100%}
+      th,td{border-bottom:1px solid var(--border);padding:10px 8px;font-size:13px}
+      th{color:var(--muted);text-align:left;background:transparent;position:sticky;top:0}
+      tr:hover{background:#0e1324}
+      .badge{display:inline-block;padding:3px 8px;border-radius:999px;background:var(--accent);color:#0b1020;border:0;font-size:12px;font-weight:700;letter-spacing:.2px}
+      .amount{font-variant-numeric:tabular-nums}
+      .amount.big{color:var(--good)}
+      .amount.huge{color:var(--mid)}
+      .amount.whale{color:var(--warn);font-weight:700}
+      .softlink{color:var(--muted);font-size:12px;margin-left:6px;word-break:break-all}
+      /* 地址链接在深色背景下的可读样式 */
+      a.addr{color:var(--text);text-decoration:none;font-weight:600;word-break:break-all}
+      a.addr:hover{color:var(--accent);text-decoration:underline}
+      .layout{display:grid;grid-template-columns:1fr;gap:16px}
+    </style>
+  </head>
+  <body>
+    <h1>大额转账监控（共识链）</h1>
+    <div class="meta">可视化最近记录，支持筛选与自动刷新。<span id="meta-start"></span></div>
+
+    <div class="card">
+      <div class="stats" id="stats">
+        <div class="stat"><h3>笔数</h3><div class="val" id="stat-count">-</div></div>
+        <div class="stat"><h3>交易所收款总额</h3><div class="val" id="stat-sum">-</div></div>
+        <div class="stat"><h3>最大额</h3><div class="val" id="stat-max">-</div></div>
+      </div>
+      <div class="filters">
+        <label>时间窗口
+          <select id="window">
+            <option value="0">全部</option>
+            <option value="10">10 分钟</option>
+            <option value="60">1 小时</option>
+            <option value="1440">24 小时</option>
+          </select>
+        </label>
+        <label>最小金额
+          <input id="minAmount" type="number" step="0.0001" placeholder="例如 100"/>
+        </label>
+        <label>地址包含
+          <input id="addressQ" type="text" placeholder="from/to 包含文本"/>
+        </label>
+        <label>
+          <input id="autoRefresh" type="checkbox" checked/> 自动刷新 (2 分钟)
+        </label>
+        <button class="button" id="refresh">刷新</button>
+        <button class="button secondary" id="clearFilters">清空筛选</button>
+      </div>
+    </div>
+
+    <table class="card">
+      <thead>
+        <tr>
+          <th>time</th>
+          <th>blockNumber</th>
+          <th>from</th>
+          <th>to</th>
+          <th>amountTokens</th>
+          <th>symbol</th>
+        </tr>
+      </thead>
+      <tbody id="tbody"></tbody>
+    </table>
+    <script>
+      const fmt = new Intl.NumberFormat('zh-CN',{maximumFractionDigits:0});
+      function classifyAmount(v){
+        // <1k: no color; 1k-10k: orange (huge); >10k: red (whale)
+        if (v>10000) return 'whale';
+        if (v>=1000) return 'huge';
+        return '';
+      }
+
+      function applyFilters(rows){
+        const now = Date.now();
+        const winMin = Number(document.getElementById('window').value || 0);
+        const minAmt = Number(document.getElementById('minAmount').value || 0);
+        const q = (document.getElementById('addressQ').value || '').toLowerCase();
+        return rows.filter(r=>{
+          const ts = Date.parse(r.time);
+          if (winMin>0 && !(now - ts <= winMin*60*1000)) return false;
+          const amt = Number(r.amountTokens || 0);
+          if (amt < minAmt) return false;
+          if (q){
+            const s = `${r.from}|${r.to}|${r.fromLabel||''}|${r.toLabel||''}`.toLowerCase();
+            if (!s.includes(q)) return false;
+          }
+          return true;
+        });
+      }
+
+      function updateStats(rows, whitelist){
+        const count = rows.length;
+        const wlSet = new Set(Object.keys(whitelist||{}).filter(Boolean).map(x=>x.toLowerCase()));
+        const sum = rows.reduce((a,b)=>{
+          const toAddr = String(b.to||'').toLowerCase();
+          const amt = Number(b.amountTokens||0);
+          return a + (wlSet.has(toAddr) ? amt : 0);
+        },0);
+        const max = rows.reduce((m,b)=>Math.max(m, Number(b.amountTokens||0)),0);
+        document.getElementById('stat-count').textContent = String(count);
+        document.getElementById('stat-sum').textContent = fmt.format(sum);
+        document.getElementById('stat-max').textContent = fmt.format(max);
+      }
+
+      function timeAgo(iso){
+        const t = Date.parse(iso);
+        if (Number.isNaN(t)) return iso;
+        const now = Date.now();
+        let s = Math.max(0, Math.floor((now - t)/1000));
+        if (s < 60) return `${s} 秒前`;
+        const m = Math.floor(s/60);
+        if (m < 60) return `${m} 分钟前`;
+        const h = Math.floor(m/60);
+        if (h < 24) return `${h} 小时前`;
+        const d = Math.floor(h/24);
+        if (d < 7) return `${d} 天前`;
+        const w = Math.floor(d/7);
+        if (w < 4) return `${w} 周前`;
+        const mo = Math.floor(d/30);
+        if (mo < 12) return `${mo} 个月前`;
+        const y = Math.floor(d/365);
+        return `${y} 年前`;
+      }
+
+      async function load(){
+        try{
+          const [mRes, wRes, tRes] = await Promise.all([
+            fetch('/api/meta'),
+            fetch('/api/whitelist'),
+            fetch('/api/transfers?limit=200')
+          ]);
+          const meta = await mRes.json();
+          const wl = await wRes.json();
+          const data = await tRes.json();
+          const rows = data.rows || [];
+          const filtered = applyFilters(rows);
+          const whitelist = wl && wl.data ? wl.data : {};
+          updateStats(filtered, whitelist);
+          const startEl = document.getElementById('meta-start');
+          if (meta && meta.startedAt) {
+            startEl.textContent = `当前数据自 ${new Date(meta.startedAt).toLocaleString()} 起`; 
+          }
+          const tbody = document.getElementById('tbody');
+          // 数据库已按 time DESC 返回，直接渲染即可（最新在上）
+          tbody.innerHTML = filtered.map(r => {
+            const amt = Number(r.amountTokens||0);
+            const cls = classifyAmount(amt);
+            return `
+            <tr>
+              <td title="${r.time}">${timeAgo(r.time)}</td>
+              <td>${r.blockNumber}</td>
+              <td><a class="addr" href="https://autonomys.subscan.io/account/${r.from}" target="_blank">${r.from}</a> ${r.fromLabel?`<span class="badge">${r.fromLabel}</span>`:''}</td>
+              <td><a class="addr" href="https://autonomys.subscan.io/account/${r.to}" target="_blank">${r.to}</a> ${r.toLabel?`<span class="badge">${r.toLabel}</span>`:''}</td>
+              <td class="amount ${cls}">${fmt.format(Math.trunc(amt))}</td>
+              <td>${r.tokenSymbol || ''}</td>
+            </tr>
+            `;
+          }).join('');
+        }catch(e){
+          console.error(e);
+        }
+      }
+      document.getElementById('refresh').addEventListener('click', load);
+      document.getElementById('clearFilters').addEventListener('click', ()=>{
+        document.getElementById('window').value='0';
+        document.getElementById('minAmount').value='';
+        document.getElementById('addressQ').value='';
+        load();
+      });
+      document.getElementById('window').addEventListener('change', load);
+      document.getElementById('minAmount').addEventListener('input', ()=>{ /* debounce 简化 */ });
+      document.getElementById('addressQ').addEventListener('input', ()=>{ /* debounce 简化 */ });
+      let timer = null;
+      function setupAutoRefresh(){
+        const ar = document.getElementById('autoRefresh');
+        if (timer){ clearInterval(timer); timer=null; }
+        if (ar.checked){ timer = setInterval(load, 120000); }
+      }
+      document.getElementById('autoRefresh').addEventListener('change', setupAutoRefresh);
+      load();
+      setupAutoRefresh();
+    </script>
+  </body>
+  </html>
+
+

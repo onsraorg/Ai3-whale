@@ -1,0 +1,28 @@
+{
+  "name": "auto-evm-large-transfers-monitor",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Monitor ERC20 transfers > threshold on Autonomys Auto EVM, annotate whitelist, export CSV.",
+  "scripts": {
+    "start": "node src/monitor.js",
+    "start:consensus": "node src/monitor_consensus.js",
+    "start:server": "node src/server.js",
+    "start:all": "concurrently -k -n consensus,server -c blue,green \"node src/monitor_consensus.js\" \"npm run start:server\"",
+    "dev": "NODE_OPTIONS=--trace-warnings node src/monitor.js",
+    "lint": "echo 'No linter configured'"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@polkadot/api": "^14.3.1",
+    "better-sqlite3": "^9.6.0",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.13.2",
+    "express": "^4.19.2"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
