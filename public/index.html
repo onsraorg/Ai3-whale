@@ -11,9 +11,11 @@
       .meta{color:var(--muted);margin-bottom:16px}
       .row{display:flex;gap:16px;flex-wrap:wrap}
       .card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:14px}
-      .stats{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:12px;margin:12px 0 16px}
-      .stat h3{margin:0 0 6px;font-size:12px;color:var(--muted)}
-      .stat .val{font-size:20px;font-weight:600}
+      .stats{display:grid;grid-template-columns:repeat(3,minmax(180px,1fr));gap:16px;margin:16px 0 20px}
+      .stat{background:#0e1324;border:1px solid var(--border);border-radius:8px;padding:12px;text-align:center;transition:all 0.2s ease}
+      .stat:hover{background:#111a2e;border-color:var(--accent);transform:translateY(-1px)}
+      .stat h3{margin:0 0 8px;font-size:13px;color:var(--muted);font-weight:500}
+      .stat .val{font-size:22px;font-weight:700;line-height:1.2}
       .filters{display:flex;gap:12px;align-items:center;flex-wrap:wrap}
       .filters input,.filters select{background:#0e1324;border:1px solid var(--border);color:var(--text);padding:8px 10px;border-radius:8px}
       .filters label{font-size:12px;color:var(--muted)}
@@ -37,13 +39,16 @@
   </head>
   <body>
     <h1>大额转账监控（共识链）</h1>
-    <div class="meta">可视化最近记录，支持筛选与自动刷新。<span id="meta-start"></span></div>
+    <div class="meta">可视化最近记录，支持筛选与自动刷新。统计包含所有白名单转账，显示仅限大额转账。<span id="meta-start"></span></div>
 
     <div class="card">
       <div class="stats" id="stats">
-        <div class="stat"><h3>笔数</h3><div class="val" id="stat-count">-</div></div>
-        <div class="stat"><h3>交易所收款总额</h3><div class="val" id="stat-sum">-</div></div>
+        <div class="stat"><h3>显示笔数</h3><div class="val" id="stat-count">-</div></div>
+        <div class="stat"><h3>白名单收款总额</h3><div class="val" id="stat-sum">-</div></div>
+        <div class="stat"><h3>白名单转出总额</h3><div class="val" id="stat-out-sum">-</div></div>
+        <div class="stat"><h3>净流出/流入</h3><div class="val" id="stat-diff">-</div></div>
         <div class="stat"><h3>最大额</h3><div class="val" id="stat-max">-</div></div>
+        <div class="stat"><h3>白名单转出最大额</h3><div class="val" id="stat-out-max">-</div></div>
       </div>
       <div class="filters">
         <label>时间窗口
@@ -108,18 +113,34 @@
         });
       }
 
-      function updateStats(rows, whitelist){
-        const count = rows.length;
-        const wlSet = new Set(Object.keys(whitelist||{}).filter(Boolean).map(x=>x.toLowerCase()));
-        const sum = rows.reduce((a,b)=>{
-          const toAddr = String(b.to||'').toLowerCase();
-          const amt = Number(b.amountTokens||0);
-          return a + (wlSet.has(toAddr) ? amt : 0);
-        },0);
-        const max = rows.reduce((m,b)=>Math.max(m, Number(b.amountTokens||0)),0);
+      function updateStats(rows, whitelist, allStats){
+        const count = rows.length; // 显示的大额转账数量
+        
+        // 使用API返回的统计信息（包含所有白名单转账）
+        const sum = allStats ? allStats.totalIn : 0;
+        const outSum = allStats ? allStats.totalOut : 0;
+        const max = allStats ? allStats.maxAmount : 0;
+        const outMax = allStats ? allStats.maxOutAmount : 0;
+        const diff = allStats ? allStats.netFlow : 0;
+        
         document.getElementById('stat-count').textContent = String(count);
         document.getElementById('stat-sum').textContent = fmt.format(sum);
         document.getElementById('stat-max').textContent = fmt.format(max);
+        document.getElementById('stat-out-sum').textContent = fmt.format(outSum);
+        document.getElementById('stat-out-max').textContent = fmt.format(outMax);
+        
+        // 为差值添加颜色样式和清晰的含义
+        const diffEl = document.getElementById('stat-diff');
+        if (diff > 0) {
+          diffEl.textContent = `+${fmt.format(diff)} (净流出)`;
+          diffEl.style.color = 'var(--good)'; // 绿色，表示净流出
+        } else if (diff < 0) {
+          diffEl.textContent = `${fmt.format(diff)} (净流入)`;
+          diffEl.style.color = 'var(--warn)'; // 红色，表示净流入
+        } else {
+          diffEl.textContent = `${fmt.format(diff)} (平衡)`;
+          diffEl.style.color = 'var(--text)'; // 默认颜色，表示平衡
+        }
       }
 
       function timeAgo(iso){
@@ -144,18 +165,20 @@
 
       async function load(){
         try{
-          const [mRes, wRes, tRes] = await Promise.all([
+          const [mRes, wRes, tRes, sRes] = await Promise.all([
             fetch('/api/meta'),
             fetch('/api/whitelist'),
-            fetch('/api/transfers?limit=200')
+            fetch('/api/transfers?limit=200'),
+            fetch('/api/stats')
           ]);
           const meta = await mRes.json();
           const wl = await wRes.json();
           const data = await tRes.json();
+          const stats = await sRes.json();
           const rows = data.rows || [];
           const filtered = applyFilters(rows);
           const whitelist = wl && wl.data ? wl.data : {};
-          updateStats(filtered, whitelist);
+          updateStats(filtered, whitelist, stats.stats);
           const startEl = document.getElementById('meta-start');
           if (meta && meta.startedAt) {
             startEl.textContent = `当前数据自 ${new Date(meta.startedAt).toLocaleString()} 起`; 

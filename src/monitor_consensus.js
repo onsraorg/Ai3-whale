@@ -108,17 +108,25 @@ async function main() {
           const [from, to, amount] = event.data;
           try {
             const amt = BigInt(amount.toString());
-            if (amt >= thresholdUnits) {
+            const fromAddr = from.toString();
+            const toAddr = to.toString();
+            
+            // 检查是否涉及白名单地址（转入或转出）
+            const isFromWhitelist = whitelist[fromAddr];
+            const isToWhitelist = whitelist[toAddr];
+            
+            // 如果涉及白名单地址，记录所有转账（无论金额大小）
+            if (isFromWhitelist || isToWhitelist) {
               const amountTokens = formatUnits(amt, decimals);
               rows.push({
                 time: timeIso,
                 blockNumber,
                 blockHash,
                 eventIndex: idx,
-                from: from.toString(),
-                fromLabel: label(from.toString()),
-                to: to.toString(),
-                toLabel: label(to.toString()),
+                from: fromAddr,
+                fromLabel: label(fromAddr),
+                to: toAddr,
+                toLabel: label(toAddr),
                 tokenSymbol,
                 tokenDecimals: String(decimals),
                 amountUnits: amt.toString(),
@@ -130,7 +138,7 @@ async function main() {
       });
 
       if (rows.length > 0) {
-        console.log(`记录 ${rows.length} 条大额转账 (block ${blockNumber})，示例金额: ${rows[0].amountTokens} ${rows[0].tokenSymbol}`);
+        console.log(`记录 ${rows.length} 条白名单转账 (block ${blockNumber})，示例金额: ${rows[0].amountTokens} ${rows[0].tokenSymbol}`);
         try {
           const db = openDb();
           insertTransfers(db, rows);
@@ -139,7 +147,7 @@ async function main() {
           console.error('写入 SQLite 失败:', e?.message || e);
         }
       } else {
-        console.log(`区块 ${blockNumber} 无满足阈值的转账`);
+        console.log(`区块 ${blockNumber} 无白名单相关转账`);
       }
     } catch (e) {
       console.error('处理新区块失败:', e?.message || e);

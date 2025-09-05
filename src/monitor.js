@@ -179,7 +179,12 @@ async function main() {
             const amountRaw = BigInt(log.data);
             const amountTokens = formatAmount(amountRaw, decimals);
 
-            if (amountTokens >= THRESHOLD_TOKENS) {
+            // 检查是否涉及白名单地址（转入或转出）
+            const isFromWhitelist = whitelist[from.toLowerCase()];
+            const isToWhitelist = whitelist[to.toLowerCase()];
+            
+            // 如果涉及白名单地址，记录所有转账（无论金额大小）
+            if (isFromWhitelist || isToWhitelist) {
               const blk = await provider.getBlock(log.blockNumber);
               rows.push({
                 time: new Date(Number(blk.timestamp) * 1000).toISOString(),
@@ -204,7 +209,7 @@ async function main() {
 
         if (rows.length > 0) {
           await csvWriter.writeRecords(rows);
-          console.log(`记录 ${rows.length} 条大额转账 (blocks ${fromBlock}-${toBlock})`);
+          console.log(`记录 ${rows.length} 条白名单转账 (blocks ${fromBlock}-${toBlock})`);
         }
       }
 
